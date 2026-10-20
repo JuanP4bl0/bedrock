@@ -263,6 +263,7 @@ var M=[
  {id:'velxz',n:'VELOCITY XZ',min:0,max:1,step:0.05},
  {id:'air',n:'AIR',min:0,max:4,step:0.1}
 ];
+var vals={}, els={}, built=false;
 function card(m,on,v,mem){
  var d=document.createElement('div');d.className='card';
  var row=document.createElement('div');row.className='row';
@@ -274,31 +275,46 @@ function card(m,on,v,mem){
  rng.min=m.min;rng.max=m.max;rng.step=m.step;rng.value=v;
  var val=document.createElement('span');val.className='v';
  val.textContent='valor: '+v;
- rng.oninput=function(){val.textContent='valor: '+(+rng.value).toFixed(2)};
+ rng.oninput=function(){vals[m.id]=(+rng.value);val.textContent='valor: '+(+rng.value).toFixed(2)};
  d.appendChild(rng);d.appendChild(val);
  var b=document.createElement('button');b.textContent=on?'ON':'OFF';
  if(on)b.className='on';
- b.onclick=function(){send(m.id,on?0:1,+rng.value)};
+ b.onclick=function(){send(m.id,on?0:1,vals[m.id])};
  d.appendChild(b);
+ els[m.id]={btn:b,mem:st,val:val,rng:rng};
  return d;
 }
-function render(s){
- var root=document.getElementById('cards');root.innerHTML='';
+function upd(s){
  for(var i=0;i<M.length;i++){
-  var id=M[i][0]||M[i].id;
-  root.appendChild(card(M[i],s[id]&&s[id].on,s[id]?s[id].v:M[i].default||0,s[id]?s[id].mem:null));
+  var id=M[i].id,e=els[id];if(!e||!s[id])continue;
+  var on=s[id].on;
+  e.btn.textContent=on?'ON':'OFF';
+  if(on)e.btn.className='on';else e.btn.className='';
+  e.mem.textContent='mem: '+(s[id].mem===null?'?':s[id].mem);
+  e.val.textContent='valor: '+(+vals[id]).toFixed(2);
  }
+}
+function render(s){
+ var root=document.getElementById('cards');root.innerHTML='';els={};
+ for(var i=0;i<M.length;i++){
+  var id=M[i].id;
+  if(vals[id]===undefined)vals[id]=s[id]?s[id].v:M[i].min;
+  root.appendChild(card(M[i],s[id]&&s[id].on,vals[id],s[id]?s[id].mem:null));
+ }
+ built=true;
 }
 function send(id,on,v){
  fetch('/api/set?k='+K+'&m='+id+'&on='+on+'&v='+v)
-  .then(function(r){return r.json()}).then(function(s){ if(s.state) render(s.state); });
+  .then(function(r){return r.json()}).then(function(s){
+   if(s.state){ if(s.state[id])vals[id]=s.state[id].v; upd(s.state); }
+  });
 }
 function refresh(){
  fetch('/api/status?k='+K).then(function(r){return r.json()})
  .then(function(s){
   if(s.ok===false){document.getElementById('st').textContent='sin juego';return;}
   document.getElementById('st').textContent='conectado al juego (pid '+s.pid+')';
-  render(s.state);
+  if(!built)render(s.state);else upd(s.state);
  }).catch(function(){document.getElementById('st').textContent='sin conexion con la PC';});
 }
 refresh();setInterval(refresh,2000);
