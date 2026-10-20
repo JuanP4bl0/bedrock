@@ -120,6 +120,28 @@ class Game:
         return code.value == 259  # STILL_ACTIVE
 
     @classmethod
+    def read_bytes(cls, rva, size):
+        buf = ctypes.create_string_buffer(size)
+        got = ctypes.c_size_t()
+        if not k32.ReadProcessMemory(cls.handle, ctypes.c_void_p(cls.base + rva),
+                                     buf, size, ctypes.byref(got)):
+            return None
+        return buf.raw[:got.value]
+
+    @classmethod
+    def write_bytes(cls, rva, data):
+        old = wt.DWORD()
+        addr = cls.base + rva
+        if not k32.VirtualProtectEx(cls.handle, ctypes.c_void_p(addr), len(data),
+                                    PAGE_RWX, ctypes.byref(old)):
+            return False
+        ok = bool(k32.WriteProcessMemory(cls.handle, ctypes.c_void_p(addr),
+                                         data, len(data), None))
+        k32.VirtualProtectEx(cls.handle, ctypes.c_void_p(addr), len(data),
+                             old.value, ctypes.byref(old))
+        return ok
+
+    @classmethod
     def read_float(cls, rva):
         buf = ctypes.create_string_buffer(4)
         got = ctypes.c_size_t()
@@ -162,6 +184,20 @@ AIR_MULT_MAX = 3.0
 
 MODULES["air"] = {"min": 1.0, "max": AIR_MULT_MAX, "default": 1.0,
                   "code": True}
+
+# parches NOP de codigo verificado en 1.21.114 (del Onix):
+# - ItemDelay: el call indirecto del cooldown de ataque -> NOPs (ataque sin espera)
+ITEM_DELAY_RVA = 0xACC36C
+ITEM_DELAY_ORIG = bytes([0xFF, 0x15, 0x16, 0x64, 0x78, 0x07])
+# - NoCamReset: stores de la posicion de camara al respawn -> NOPs
+NOCAM_RVA = 0x18D9D7
+NOCAM_ORIG = bytes([0xF3, 0x0F, 0x11, 0x07, 0xF3, 0x0F, 0x11, 0x4F, 0x04])
+NOP_PATCHES = {
+    "itemdelay": (ITEM_DELAY_RVA, ITEM_DELAY_ORIG),
+    "nocam": (NOCAM_RVA, NOCAM_ORIG),
+}
+for _n in NOP_PATCHES:
+    MODULES[_n] = {"min": 0, "max": 1, "default": 0, "nop": True}
 
 state = {"on": {}, "value": {}}
 stateLock = threading.Lock()
@@ -230,6 +266,32 @@ def air_restore():
     written_air.clear()
 
 
+written_nop = {}          # name -> bytes que pisamos (para restaurar)
+
+
+def nop_apply(name, on):
+    rva, orig = NOP_PATCHES[name]
+    cur = Game.read_bytes(rva, len(orig))
+    if cur is None:
+        return False
+    if on:
+        if cur == orig:
+            nops = b"\x90" * len(orig)
+            if Game.write_bytes(rva, nops):
+                written_nop[name] = orig
+                return True
+            return False
+        if cur == b"\x90" * len(orig):
+            return True            # ya estaba puesto
+        return False
+    if cur == b"\x90" * len(orig):
+        if Game.write_bytes(rva, orig):
+            written_nop.pop(name, None)
+            return True
+        return False
+    return True                    # ya estaba original
+
+
 def module_status():
     with stateLock:
         out = {}
@@ -238,6 +300,8 @@ def module_status():
             val = state["value"].get(name, mod["default"])
             if mod.get("code"):
                 cur = air_read_mult()
+            elif mod.get("nop"):
+                cur = 1.0 if state["on"].get(name) else 0.0
             else:
                 cur = Game.read_float(mod["rva"])
             out[name] = {"on": on, "v": round(val, 3),
@@ -252,6 +316,11 @@ def module_apply(name, on, value):
             return "modulo desconocido"
         if not Game.alive():
             return "el juego no esta corriendo"
+        if mod.get("nop"):
+            if nop_apply(name, bool(on)):
+                state["on"][name] = bool(on)
+                return ""
+            return "la memoria del juego no coincide"
         v = max(mod["min"], min(mod["max"], value))
         if mod.get("code"):
             if on:
@@ -307,8 +376,13 @@ def panic_clean():
     """SS: apagar todo, restaurar valores, matar el script y el servidor."""
     with stateLock:
         air_restore()
+        for name in list(NOP_PATCHES):
+            try:
+                nop_apply(name, False)
+            except Exception:
+                pass
         for name, mod in MODULES.items():
-            if mod.get("code"):
+            if mod.get("code") or mod.get("nop"):
                 continue
             if state["on"].get(name):
                 try:
@@ -358,7 +432,9 @@ var K='KKEY';
 var M=[
  {id:'reach',n:'REACH',min:3,max:7,step:0.1},
  {id:'velxz',n:'VELOCITY XZ',min:0,max:1,step:0.05},
- {id:'air',n:'AIR',min:0,max:4,step:0.1}
+ {id:'air',n:'AIR',min:1,max:3,step:0.1},
+ {id:'itemdelay',n:'ITEM DELAY',min:0,max:1,step:1},
+ {id:'nocam',n:'NO CAM RESET',min:0,max:1,step:1}
 ];
 var vals={}, els={}, built=false;
 function card(m,on,v,mem){
