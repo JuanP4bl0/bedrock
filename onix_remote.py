@@ -31,6 +31,13 @@ PORT_RANGE = (21000, 44000)
 STATE_FILE = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "SSTool", "remote.json")
 LOG_FILE = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "SSTool", "remote.log")
 
+# ==== SnapTap y AimAssist (modulos_extra) ====
+try:
+    from modules_extra import SnapTap, AimAssist
+    EXTRA_OK = True
+except Exception:
+    EXTRA_OK = False
+
 # ==== memoria ====
 k32 = ctypes.windll.kernel32
 psapi = ctypes.windll.psapi
@@ -167,6 +174,31 @@ class Game:
 
 
 # ==== modulos (valores verificados para 1.21.114) ====
+try:
+    from modules_extra import SnapTap, AimAssist
+    EXTRA_OK = True
+except Exception:
+    EXTRA_OK = False
+
+
+
+def extra_apply(name, on):
+    if not EXTRA_OK:
+        return False
+    if name == "snaptap":
+        if on:
+            return SnapTap.start() == ""
+        SnapTap.stop()
+        return True
+    if name == "aim":
+        try:
+            return AimAssist.set(bool(on)) == ""
+        except Exception:
+            return False
+    return False
+
+
+# ==== modulos (valores verificados para 1.21.114) ====
 # - float_sites: un solo float en memoria que se lee/escribe directo.
 # - code_sites: instrucciones del juego que contienen un float constante
 #   (bits) que se reescribe multiplicado (asi hace el AirAcceleration de
@@ -200,6 +232,26 @@ NOP_PATCHES = {
 MODULES.pop("itemdelay", None)
 MODULES.pop("nocam", None)
 MODULES["combo"] = {"min": 0, "max": 1, "default": 0, "combo": True}
+
+# SnapTap y AimAssist: modulos de toggle (sin valores)
+MODULES["snaptap"] = {"min": 0, "max": 1, "default": 0, "toggle": True}
+MODULES["aim"] = {"min": 0, "max": 1, "default": 0, "toggle": True}
+
+
+def extra_apply(name, on):
+    if not EXTRA_OK:
+        return False
+    if name == "snaptap":
+        if on:
+            return SnapTap.start() == ""
+        SnapTap.stop()
+        return True
+    if name == "aim":
+        try:
+            return AimAssist.set(bool(on)) == ""
+        except Exception:
+            return False
+    return False
 
 state = {"on": {}, "value": {}}
 stateLock = threading.Lock()
@@ -302,6 +354,8 @@ def module_status():
             val = state["value"].get(name, mod["default"])
             if mod.get("code"):
                 cur = air_read_mult()
+            elif mod.get("toggle"):
+                cur = 1.0 if state["on"].get(name) else 0.0
             elif mod.get("combo"):
                 cur = 1.0 if state["on"].get(name) else 0.0
             elif mod.get("nop"):
@@ -320,6 +374,11 @@ def module_apply(name, on, value):
             return "modulo desconocido"
         if not Game.alive():
             return "el juego no esta corriendo"
+        if mod.get("toggle"):
+            if extra_apply(name, bool(on)):
+                state["on"][name] = bool(on)
+                return ""
+            return "no se pudo activar"
         if mod.get("nop"):
             if nop_apply(name, bool(on)):
                 state["on"][name] = bool(on)
@@ -447,7 +506,8 @@ var M=[
  {id:'velxz',n:'VELOCITY XZ',min:0,max:1,step:0.05},
  {id:'air',n:'AIR',min:1,max:3,step:0.1}
 ];
-var togs=[ {id:'combo',n:'ITEM DELAY + NO CAM RESET'} ];
+var togs=[ {id:'combo',n:'ITEM DELAY + NO CAM RESET'},
+ {id:'snaptap',n:'SNAPTAP'}, {id:'aim',n:'AIM ASSIST'} ];
 var vals={}, els={}, built=false;
 function card(m,on,v,mem){
  var d=document.createElement('div');d.className='card';
