@@ -190,7 +190,10 @@ def module_apply(name, on, value):
         if not on:
             if Game.write_float(mod["rva"], mod["default"]):
                 state["on"][name] = False
-                state["value"][name] = mod["default"]
+                # recordar el ultimo valor: al re-prender, vuelve al que habia
+                # puesto el usuario (no resetear al default del modulo)
+                if state["value"].get(name, 0) >= mod["min"]:
+                    state["value"][name] = state["value"].get(name, mod["default"])
                 return ""
             return "no se pudo restaurar"
     return ""
