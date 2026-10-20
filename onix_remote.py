@@ -196,8 +196,10 @@ NOP_PATCHES = {
     "itemdelay": (ITEM_DELAY_RVA, ITEM_DELAY_ORIG),
     "nocam": (NOCAM_RVA, NOCAM_ORIG),
 }
-for _n in NOP_PATCHES:
-    MODULES[_n] = {"min": 0, "max": 1, "default": 0, "nop": True}
+# van juntos con UN boton: combo = itemdelay + nocam
+MODULES.pop("itemdelay", None)
+MODULES.pop("nocam", None)
+MODULES["combo"] = {"min": 0, "max": 1, "default": 0, "combo": True}
 
 state = {"on": {}, "value": {}}
 stateLock = threading.Lock()
@@ -300,6 +302,8 @@ def module_status():
             val = state["value"].get(name, mod["default"])
             if mod.get("code"):
                 cur = air_read_mult()
+            elif mod.get("combo"):
+                cur = 1.0 if state["on"].get(name) else 0.0
             elif mod.get("nop"):
                 cur = 1.0 if state["on"].get(name) else 0.0
             else:
@@ -320,6 +324,15 @@ def module_apply(name, on, value):
             if nop_apply(name, bool(on)):
                 state["on"][name] = bool(on)
                 return ""
+            return "la memoria del juego no coincide"
+        if mod.get("combo"):
+            ok1 = nop_apply("itemdelay", bool(on))
+            ok2 = nop_apply("nocam", bool(on))
+            if ok1 and ok2:
+                state["on"][name] = bool(on)
+                return ""
+            nop_apply("itemdelay", False)
+            nop_apply("nocam", False)
             return "la memoria del juego no coincide"
         v = max(mod["min"], min(mod["max"], value))
         if mod.get("code"):
@@ -432,10 +445,9 @@ var K='KKEY';
 var M=[
  {id:'reach',n:'REACH',min:3,max:7,step:0.1},
  {id:'velxz',n:'VELOCITY XZ',min:0,max:1,step:0.05},
- {id:'air',n:'AIR',min:1,max:3,step:0.1},
- {id:'itemdelay',n:'ITEM DELAY',min:0,max:1,step:1},
- {id:'nocam',n:'NO CAM RESET',min:0,max:1,step:1}
+ {id:'air',n:'AIR',min:1,max:3,step:0.1}
 ];
+var togs=[ {id:'combo',n:'ITEM DELAY + NO CAM RESET'} ];
 var vals={}, els={}, built=false;
 function card(m,on,v,mem){
  var d=document.createElement('div');d.className='card';
@@ -457,6 +469,17 @@ function card(m,on,v,mem){
  els[m.id]={btn:b,mem:st,val:val,rng:rng};
  return d;
 }
+function tog(t,on){
+ var d=document.createElement('div');d.className='card';
+ var row=document.createElement('div');row.className='row';
+ var nm=document.createElement('span');nm.className='n';nm.textContent=t.n;
+ var b=document.createElement('button');b.textContent=on?'ON':'OFF';
+ if(on)b.className='on';
+ b.onclick=function(){send(t.id,on?0:1,0)};
+ d.appendChild(nm);d.appendChild(b);d.appendChild(row);
+ els[t.id]={btn:b};
+ return d;
+}
 function upd(s){
  for(var i=0;i<M.length;i++){
   var id=M[i].id,e=els[id];if(!e||!s[id])continue;
@@ -466,6 +489,13 @@ function upd(s){
   e.mem.textContent='mem: '+(s[id].mem===null?'?':s[id].mem);
   e.val.textContent='valor: '+(+vals[id]).toFixed(2);
  }
+ for(var j=0;j<togs.length;j++){
+  var idt=togs[j].id,et=els[idt];
+  if(et&&s[idt]){ var ont=s[idt].on;
+   et.btn.textContent=ont?'ON':'OFF';
+   if(ont)et.btn.className='on';else et.btn.className='';
+  }
+ }
 }
 function render(s){
  var root=document.getElementById('cards');root.innerHTML='';els={};
@@ -473,6 +503,10 @@ function render(s){
   var id=M[i].id;
   if(vals[id]===undefined)vals[id]=s[id]?s[id].v:M[i].min;
   root.appendChild(card(M[i],s[id]&&s[id].on,vals[id],s[id]?s[id].mem:null));
+ }
+ for(var j=0;j<togs.length;j++){
+  var idt=togs[j].id;
+  root.appendChild(tog(togs[j],s[idt]&&s[idt].on));
  }
  built=true;
 }
