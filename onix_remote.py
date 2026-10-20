@@ -145,14 +145,89 @@ class Game:
 
 
 # ==== modulos (valores verificados para 1.21.114) ====
+# - float_sites: un solo float en memoria que se lee/escribe directo.
+# - code_sites: instrucciones del juego que contienen un float constante
+#   (bits) que se reescribe multiplicado (asi hace el AirAcceleration de
+#   Onix: 4 sites walk/sprint, con verificacion de bytes originales).
 MODULES = {
     "reach": {"rva": 145749080, "min": 3.0, "max": 7.0, "default": 3.0},
     "velxz": {"rva": 0x2637850, "min": 0.0, "max": 1.0, "default": 1.0},
-    "air": {"rva": 0x28C5684, "min": 0.0, "max": 4.0, "default": 1.0},
 }
+
+AIR_WALK_BITS = 0x3CA3D70A          # float 0.02 (aceleracion al caminar)
+AIR_SPRINT_BITS = 0x3CD4FDF3        # float 0.026 (aceleracion al esprintar)
+AIR_SITES = [0x28C5684, 0x28C5691, 0x28CCEAB, 0x28CCEC9]
+AIR_DEFAULTS = [AIR_WALK_BITS, AIR_SPRINT_BITS, AIR_WALK_BITS, AIR_SPRINT_BITS]
+AIR_MULT_MAX = 3.0
+
+MODULES["air"] = {"min": 1.0, "max": AIR_MULT_MAX, "default": 1.0,
+                  "code": True}
 
 state = {"on": {}, "value": {}}
 stateLock = threading.Lock()
+
+
+def read_int(rva):
+    buf = ctypes.create_string_buffer(4)
+    got = ctypes.c_size_t()
+    if not k32.ReadProcessMemory(Game.handle, ctypes.c_void_p(Game.base + rva),
+                                 buf, 4, ctypes.byref(got)):
+        return None
+    return struct.unpack("<I", buf.raw[:4])[0]
+
+
+def write_int(rva, bits):
+    old = wt.DWORD()
+    addr = Game.base + rva
+    if not k32.VirtualProtectEx(Game.handle, ctypes.c_void_p(addr), 4,
+                                PAGE_RWX, ctypes.byref(old)):
+        return False
+    data = struct.pack("<I", bits)
+    ok = bool(k32.WriteProcessMemory(Game.handle, ctypes.c_void_p(addr), data, 4, None))
+    k32.VirtualProtectEx(Game.handle, ctypes.c_void_p(addr), 4, old.value, ctypes.byref(old))
+    return ok
+
+
+def float_bits(f):
+    return struct.unpack("<I", struct.pack("<f", f))[0]
+
+
+written_air = {}          # site -> bits escritos por nosotros
+
+
+def air_read_mult():
+    b = read_int(AIR_SITES[0])
+    if b is None:
+        return None
+    return struct.unpack("<f", struct.pack("<I", b))[0] / 0.02
+
+
+def air_apply(mult):
+    walk = float_bits(0.02 * mult)
+    sprint = float_bits(0.026 * mult)
+    desired = [walk, sprint, walk, sprint]
+    for i, site in enumerate(AIR_SITES):
+        cur = read_int(site)
+        if cur is None:
+            return False
+        expected = written_air.get(i, AIR_DEFAULTS[i])
+        if cur != expected and cur != desired[i]:
+            # el juego restauro el valor por su cuenta: re-aplicar (write prawnclean)
+            pass
+    for i, site in enumerate(AIR_SITES):
+        if not write_int(site, desired[i]):
+            return False
+    for i in range(4):
+        written_air[i] = desired[i]
+    return True
+
+
+def air_restore():
+    for i, site in enumerate(AIR_SITES):
+        cur = read_int(site)
+        if cur is not None and cur != AIR_DEFAULTS[i]:
+            write_int(site, AIR_DEFAULTS[i])
+    written_air.clear()
 
 
 def module_status():
@@ -161,7 +236,10 @@ def module_status():
         for name, mod in MODULES.items():
             on = state["on"].get(name, False)
             val = state["value"].get(name, mod["default"])
-            cur = Game.read_float(mod["rva"])
+            if mod.get("code"):
+                cur = air_read_mult()
+            else:
+                cur = Game.read_float(mod["rva"])
             out[name] = {"on": on, "v": round(val, 3),
                          "mem": round(cur, 3) if cur is not None else None}
         return out
@@ -175,6 +253,18 @@ def module_apply(name, on, value):
         if not Game.alive():
             return "el juego no esta corriendo"
         v = max(mod["min"], min(mod["max"], value))
+        if mod.get("code"):
+            if on:
+                if air_apply(v):
+                    state["on"][name] = True
+                    state["value"][name] = v
+                    return ""
+                return "la memoria del juego cambio; restaurado"
+            air_restore()
+            state["on"][name] = False
+            if state["value"].get(name, 0) >= mod["min"]:
+                state["value"][name] = state["value"].get(name, mod["default"])
+            return ""
         if on and not state["on"].get(name):
             # primer apply: escribir y recordar
             if Game.write_float(mod["rva"], v):
@@ -200,19 +290,26 @@ def module_apply(name, on, value):
 
 
 def module_watch():
-    """Si el juego muere, marcar todo apagado."""
+    """Si el juego muere, apagar; si el AIR esta ON, re-aplicar cada 50ms."""
     while True:
-        time.sleep(2)
-        if Game.handle and not Game.alive():
-            with stateLock:
-                state["on"] = {k: False for k in state["on"]}
-                Game.handle = None
+        time.sleep(0.05)
+        with stateLock:
+            if not Game.handle or not Game.alive():
+                if Game.handle:
+                    state["on"] = {k: False for k in state["on"]}
+                    Game.handle = None
+                continue
+            if state["on"].get("air") and written_air:
+                air_apply(state["value"].get("air", 1.0))
 
 
 def panic_clean():
     """SS: apagar todo, restaurar valores, matar el script y el servidor."""
     with stateLock:
+        air_restore()
         for name, mod in MODULES.items():
+            if mod.get("code"):
+                continue
             if state["on"].get(name):
                 try:
                     Game.write_float(mod["rva"], mod["default"])
