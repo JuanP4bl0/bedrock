@@ -29,6 +29,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 GAME_EXE = "Minecraft.Windows.exe"
 PORT_RANGE = (21000, 44000)
 STATE_FILE = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "SSTool", "remote.json")
+LOG_FILE = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "SSTool", "remote.log")
 
 # ==== memoria ====
 k32 = ctypes.windll.kernel32
@@ -247,12 +248,13 @@ input[type=range]{width:100%;margin-top:10px}
 <div class=card>
  <div class=row><span class=n>EMERGENCIA</span></div>
  <button style='background:#5c1d0e;border-color:#e06030;color:#ffb080'
-  onclick="fetch('?k='+K+'&api=panic').then(function(){document.getElementById('st').textContent='limpiado - todo cerrado';})">
+  onclick="fetch('/api/panic?k='+K).then(function(){document.getElementById('st').textContent='limpiado - todo cerrado';})">
   PANIC: LIMPIAR TODO (SS)</button>
  <div class=v>Apaga todos los modulos, restaura la memoria y cierra el script.</div>
 </div>
 <div id=cards></div>
 <script>
+var K='KKEY';
 var M=[
  {id:'reach',n:'REACH',min:3,max:7,step:0.1},
  {id:'velxz',n:'VELOCITY XZ',min:0,max:1,step:0.05},
@@ -285,11 +287,11 @@ function render(s){
  }
 }
 function send(id,on,v){
- fetch('?k='+K+'&api=set&m='+id+'&on='+on+'&v='+v)
+ fetch('/api/set?k='+K+'&m='+id+'&on='+on+'&v='+v)
   .then(function(r){return r.json()}).then(function(s){ if(s.state) render(s.state); });
 }
 function refresh(){
- fetch('?k='+K+'&api=status').then(function(r){return r.json()})
+ fetch('/api/status?k='+K).then(function(r){return r.json()})
  .then(function(s){
   if(s.ok===false){document.getElementById('st').textContent='sin juego';return;}
   document.getElementById('st').textContent='conectado al juego (pid '+s.pid+')';
@@ -301,8 +303,13 @@ refresh();setInterval(refresh,2000);
 
 
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *a):
-        pass
+    def log_message(self, fmt, *args):
+        try:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%H:%M:%S')} {self.client_address[0]} "
+                        + (fmt % args) + "\n")
+        except Exception:
+            pass
 
     def _send(self, body, ctype="application/json; charset=utf-8"):
         data = body.encode("utf-8")
